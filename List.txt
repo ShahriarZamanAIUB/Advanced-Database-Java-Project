@@ -1,0 +1,278 @@
+--Views:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------- 
+
+
+create view csrt_this_teacher as select course_code,course_name,student_id,student_name,marks from csrt where teacher_id=(select id from loggedIntable) and status='Running' order by serial;
+
+--Views:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+create view csrt_this_student as select course_name,marks,nvl(grade,'Blank') grade,teacher_name,semester,year from csrt where student_id=(select id from loggedinTable) order by serial asc;
+
+--Views:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+create view this_semester_report as select * from university_report where serial=(select max(serial) from university_report );
+
+--Views:-----------------------------------------------------------------------------------------------------------------------------------------------
+create view salary_view as select name,id,salary,round((sysdate-hire_date)/365) experience from all_teachers;
+
+--Views:-----------------------------------------------------------------------------------------------------------------------------------------------
+create view admin_viewing_csrt as select student_name,course_name,teacher_name,marks,grade,status,semester,year from csrt;
+
+
+
+
+
+--Triggers:---------------------------------------------------------------------------------------------------------------------------------------
+
+create or replace trigger expenditure_recorder 
+before update  on   all_teachers 
+for each row 
+begin 
+update this_semester_report set expenditure=expenditure+:new.balance-:old.balance;
+end;
+
+--Triggers:---------------------------------------------------------------------------------------------------------------------------------------
+
+create or replace trigger marks_value_fixer 
+before update  of marks on   csrt
+for each row 
+begin 
+ 
+if :new.marks>100 then
+
+:new.marks:=100;
+
+elsif :new.marks<0 then
+
+:new.marks:=0;
+
+end if;
+
+end;
+
+
+
+--Triggers:---------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+create or replace trigger result_log
+after update   on   csrt
+begin
+insert into task_log values((select id from loggedinTable),'Updating results',sysdate,SYSTIMESTAMP);
+
+end;
+
+--Procedures:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ -------- 
+
+
+create or replace procedure register_student (s_name all_students.name%type, s_password all_students.password%type)
+
+is  
+
+new_id all_students.id%type;
+
+temp_id int;
+
+year_prefix varchar(10);
+
+semester_suffix varchar(10);
+
+rough_id all_students.id%type;
+
+begin
+
+
+
+select substr(max(id),4,5) into new_id from all_students;
+
+ 
+
+temp_id:=TO_NUMBER(new_id, '99999');
+
+temp_id:=temp_id+1;
+
+select substr(year,3,2),semester into year_prefix , semester_suffix from university_report where serial=(select max(serial) from university_report);
+ 
+
+if    semester_suffix='Spring' then
+
+semester_suffix:='1';
+
+elsif semester_suffix='Summer' then
+
+semester_suffix:='2';
+
+elsif semester_suffix='Fall' then
+
+semester_suffix:='3';
+
+else
+
+semester_suffix:=semester_suffix;
+
+end if;
+
+
+rough_id:=to_char(temp_id,'FM99999');
+
+rough_id:=CONCAT(CONCAT(year_prefix,CONCAT(CONCAT('-', rough_id),'-')),semester_suffix);
+
+ 
+--dbms_output.put_line(rough_id); 
+
+insert into all_students values(s_name, rough_id, s_password,'CSE',0,0,sysdate,null,'Started');
+
+update this_semester_report set  STUDENTS_ADMITTED=STUDENTS_ADMITTED+1;
+
+ 
+end;
+
+
+
+
+
+--Procedures:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ -------------------------------------------------------------------------------- 
+
+create or replace procedure update_marks(s_id all_students.id%type,c_code all_courses.course_code%type,s_marks int)
+is
+
+t_id all_teachers.id%type;
+
+sgrade csrt.grade%type;
+
+sgrade_point csrt.grade_point%type;
+
+begin
+
+if s_marks>=90 and  s_marks<=100 then
+
+sgrade_point:=4; 
+sgrade:='A+'; 
+
+elsif s_marks>=85 and  s_marks<90 then
+
+sgrade_point:=3.75; 
+sgrade:='A'; 
+
+elsif s_marks>=80 and  s_marks<85 then
+
+sgrade_point:=3.5; 
+sgrade:='B+'; 
+
+elsif s_marks>=75 and  s_marks<80 then
+
+sgrade_point:=3.25; 
+sgrade:='B'; 
+
+elsif s_marks>=70 and  s_marks<75 then
+
+sgrade_point:=3; 
+sgrade:='C+'; 
+
+elsif s_marks>=65 and  s_marks<70 then
+
+sgrade_point:=2.75; 
+sgrade:='C'; 
+
+elsif s_marks>=60 and  s_marks<65 then
+
+sgrade_point:=2.5; 
+sgrade:='D+'; 
+
+elsif s_marks>=50 and  s_marks<60 then
+
+sgrade_point:=2.25; 
+sgrade:='D'; 
+
+elsif  s_marks<50 then
+
+sgrade_point:=0; 
+sgrade:='F';
+ 
+else  
+dbms_output.put_line('Error');
+end if;
+select id into t_id from loggedinTable;
+update csrt set marks=s_marks, grade_point=sgrade_point,grade=sgrade   where teacher_id=t_id and student_id=s_id and course_code=c_code and status='Running';
+end;
+
+
+
+
+--Procedures---------------------------------------------------------------------------------------------------------------
+
+
+create or replace procedure allocate_teachers
+is
+
+ 
+
+ccode varchar(4);
+
+tname varchar(40);
+
+tid  varchar(40);
+
+s varchar(8);
+
+cursor cx is select * from csrt where status='Running' and teacher_id is null;
+
+begin
+
+for rx in cx
+loop
+
+ccode:=substr(rx.course_code,1,3);
+s:=rx.serial;
+
+select id into tid from all_teachers where domain=ccode;
+
+select name into tname from all_teachers where domain=ccode;
+
+--dbms_output.put_line(ccode ||' '||tname||' '||tid||' '||s);
+
+update csrt set teacher_id=tid,teacher_name=tname where serial=s;
+
+end loop;
+end;
+
+
+--Procedures---------------------------------------------------------------------------------------------------------------
+
+
+create or replace procedure fresher_registration
+is
+  student_name varchar(50);
+  student_id   varchar(20);
+ 
+  j number(10):=0;
+  u_year number(5);
+  u_semester varchar(15);
+   
+
+
+  cursor c_course  is select * from all_courses  where course_prerequisite_code is null;
+  cursor c_student is select * from all_students where status='Started' and credits_completed=0 order by id asc;
+ 
+BEGIN
+select year,semester into u_year,u_semester from university_report where serial=(select max(serial) from university_report);
+  for r_course in c_course
+  loop  
+ 
+   for r_student in c_student
+  loop
+  j:=j+1;
+ 
+  insert into csrt values 
+(concat('C',to_char(j)),r_course.course_code,r_course.course_name,null,null,r_student.id,r_student.name,0,null,'Running',u_semester, u_year,null,null );
+
+ 
+   
+  end loop; 
+
+if r_course.course_name='CAD' then 
+exit;
+end if; 
+end loop;
+update all_students set status='Studying' where status='Started';
+end;
